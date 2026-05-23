@@ -45,14 +45,14 @@ CITY_CONFIGS = {
         "lng_range": (-74.1, -73.7),
         "tz_offset": -300,
         "n_users": 100,
-        "n_checkins": 1000,
+        "n_checkins": 5000,
     },
     "TKY": {
         "lat_range": (35.5, 35.8),
         "lng_range": (139.5, 139.9),
         "tz_offset": 540,
         "n_users": 100,
-        "n_checkins": 1000,
+        "n_checkins": 5000,
     },
 }
 
@@ -81,19 +81,32 @@ def generate_city(city: str) -> list[list]:
     n_checkins = cfg["n_checkins"]
 
     user_ids = [_rand_id("u", 6) for _ in range(n_users)]
-    venue_pool = [
-        (_rand_id("v", 16), random.choice(CATEGORIES))
-        for _ in range(n_checkins // 5)
-    ]
+    # Create venues with FIXED coordinates so many users visit the same geocell
+    n_venues = 50
+    venue_pool = []
+    for _ in range(n_venues):
+        vid = _rand_id("v", 16)
+        cat_id, cat_name = random.choice(CATEGORIES)
+        vlat = round(random.uniform(lat_lo, lat_hi), 4)  # 4 decimals -> within one cell
+        vlng = round(random.uniform(lng_lo, lng_hi), 4)
+        venue_pool.append((vid, cat_id, cat_name, vlat, vlng))
 
     rows = []
-    for _ in range(n_checkins):
-        user_id = random.choice(user_ids)
-        venue_id, (cat_id, cat_name) = random.choice(venue_pool)
-        lat = round(random.uniform(lat_lo, lat_hi), 6)
-        lng = round(random.uniform(lng_lo, lng_hi), 6)
-        ts = _rand_timestamp()
-        rows.append([user_id, venue_id, cat_id, cat_name, lat, lng, tz_offset, ts])
+    # Generate as daily trips: each user visits 3-8 venues per day for ~50 days
+    n_days = n_checkins // (n_users * 5)  # ~5 checkins/user/day avg
+    for user_id in user_ids:
+        for _ in range(max(n_days, 10)):
+            day_offset = random.randint(0, TOTAL_SECONDS // 86400)
+            base_dt = START_DATE + timedelta(days=day_offset)
+            n_visits = random.randint(3, 8)
+            hours = sorted(random.sample(range(7, 23), min(n_visits, 16)))
+            for hour in hours:
+                vid, cat_id, cat_name, vlat, vlng = random.choice(venue_pool)
+                lat = round(vlat + random.uniform(-0.0005, 0.0005), 6)
+                lng = round(vlng + random.uniform(-0.0005, 0.0005), 6)
+                dt = base_dt.replace(hour=hour, minute=random.randint(0, 59))
+                ts = dt.strftime("%a %b %d %H:%M:%S +0000 %Y")
+                rows.append([user_id, vid, cat_id, cat_name, lat, lng, tz_offset, ts])
 
     return rows
 
