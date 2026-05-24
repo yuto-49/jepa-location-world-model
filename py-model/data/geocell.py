@@ -9,7 +9,7 @@ import math
 
 LAT_ORIGIN: float = 0.0
 LNG_ORIGIN: float = -180.0
-CELL_SIZE_DEG: float = 0.005
+CELL_SIZE_DEG: float = 0.01  # ~1km cells (coarser = smaller vocab, more signal per cell)
 
 
 def quantize(lat: float, lng: float) -> str:

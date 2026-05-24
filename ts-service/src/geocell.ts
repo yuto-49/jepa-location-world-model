@@ -6,7 +6,7 @@
 
 export const LAT_ORIGIN = 0.0;
 export const LNG_ORIGIN = -180.0;
-export const CELL_SIZE_DEG = 0.005;
+export const CELL_SIZE_DEG = 0.01; // ~1km cells (coarser = smaller vocab, more signal per cell)
 
 export function quantize(lat: number, lng: number): string {
   const iy = Math.floor((lat - LAT_ORIGIN) / CELL_SIZE_DEG);
