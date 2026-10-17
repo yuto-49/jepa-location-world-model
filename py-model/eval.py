@@ -211,6 +211,74 @@ def evaluate_jepa(
     }
 
 
+def evaluate_jepa_cls(
+    ckpt_path: str,
+    test_path: str,
+    vocab: dict[str, int],
+    device: str = "cpu",
+    k: int = 5,
+) -> dict:
+    """Evaluate JEPA with a fine-tuned classification head."""
+    idx_to_cell = {v: k for k, v in vocab.items()}
+
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+    model = JEPAModel(
+        vocab_size=ckpt["vocab_size"],
+        d_model=ckpt["d_model"],
+        max_len=ckpt["max_len"],
+        enc_layers=ckpt["enc_layers"],
+        pred_layers=ckpt["pred_layers"],
+        n_heads=ckpt["n_heads"],
+    )
+    model.init_cls_head()
+    model.load_state_dict(ckpt["model_state_dict"])
+    model.to(device)
+    model.eval()
+
+    ds = TrajectoryDataset(test_path, vocab, max_len=ckpt["max_len"])
+    loader = torch.utils.data.DataLoader(
+        ds, batch_size=32, shuffle=False, collate_fn=collate_trajectories,
+    )
+
+    top1_hits = 0
+    top5_hits = 0
+    km_errors = []
+    total = 0
+
+    with torch.no_grad():
+        for batch in loader:
+            batch_dev = {k_: v.to(device) for k_, v in batch.items()}
+            logits, targets = model.forward_cls(batch_dev)
+
+            top1_preds = logits.argmax(dim=-1)
+            top5_preds = logits.topk(k, dim=-1).indices
+
+            for i in range(targets.size(0)):
+                true_idx = targets[i].item()
+                true_cell = idx_to_cell.get(true_idx, "<UNK>")
+                pred_cell = idx_to_cell.get(top1_preds[i].item(), "<UNK>")
+                top5_cells = [idx_to_cell.get(top5_preds[i, j].item(), "<UNK>") for j in range(k)]
+
+                total += 1
+                if pred_cell == true_cell:
+                    top1_hits += 1
+                if true_cell in top5_cells:
+                    top5_hits += 1
+
+                km = cell_distance_km(pred_cell, true_cell)
+                if not np.isnan(km):
+                    km_errors.append(km)
+
+    km_arr = np.array(km_errors) if km_errors else np.array([0.0])
+    return {
+        "top1_acc": top1_hits / max(total, 1),
+        "top5_acc": top5_hits / max(total, 1),
+        "median_km": float(np.median(km_arr)),
+        "p90_km": float(np.percentile(km_arr, 90)),
+        "n_evaluated": total,
+    }
+
+
 def main():
     print("Loading data...")
     train_trajs = load_jsonl(os.path.join(DATA_DIR, "train.jsonl"))
@@ -244,22 +312,34 @@ def main():
 
     print("=" * 70)
 
-    # JEPA evaluation
+    with open(os.path.join(DATA_DIR, "vocab.json")) as f:
+        vocab = json.load(f)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    test_path = os.path.join(DATA_DIR, "test.jsonl")
+
+    # JEPA latent-NN evaluation
     ckpt_path = os.path.join(os.path.dirname(__file__), "checkpoints", "best.pt")
     if os.path.exists(ckpt_path):
-        with open(os.path.join(DATA_DIR, "vocab.json")) as f:
-            vocab = json.load(f)
-        device = "cuda" if torch.cuda.is_available() else "cpu"
         model = load_jepa_model(ckpt_path, device)
-        test_path = os.path.join(DATA_DIR, "test.jsonl")
         results = evaluate_jepa(model, test_path, vocab, device)
         print(
-            f"{'JEPA':<25} {results['top1_acc']:>8.3f} {results['top5_acc']:>8.3f} "
+            f"{'JEPA (latent-NN)':<25} {results['top1_acc']:>8.3f} {results['top5_acc']:>8.3f} "
             f"{results['median_km']:>8.1f} {results['p90_km']:>8.1f} "
             f"emb_std={results['emb_std']:.4f}"
         )
     else:
-        print("\n(No JEPA checkpoint found at checkpoints/best.pt - run train.py first)")
+        print("(No JEPA checkpoint at checkpoints/best.pt)")
+
+    # JEPA + classification head evaluation
+    cls_ckpt_path = os.path.join(os.path.dirname(__file__), "checkpoints", "best_cls.pt")
+    if os.path.exists(cls_ckpt_path):
+        results = evaluate_jepa_cls(cls_ckpt_path, test_path, vocab, device)
+        print(
+            f"{'JEPA + cls head':<25} {results['top1_acc']:>8.3f} {results['top5_acc']:>8.3f} "
+            f"{results['median_km']:>8.1f} {results['p90_km']:>8.1f}"
+        )
+    else:
+        print("(No cls checkpoint at checkpoints/best_cls.pt - run finetune.py first)")
 
     print("=" * 70)
 

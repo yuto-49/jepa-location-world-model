@@ -8,3 +8,6 @@ data/processed/
 node_modules/
 dist/
 checkpoints/
+py-model/data/raw/
+py-model/data/processed/
+*.jsonl
